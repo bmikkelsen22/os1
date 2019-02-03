@@ -1,0 +1,101 @@
+#!/bin/bash
+
+#Clean up the temp files and exit with code 1 if script interrupted
+trap "rm -f *$$ && exit 1" INT TERM HUP
+
+#Check to make sure were getting the right number of arguments
+if [ $# -gt 2 ] || [ $# -lt 1 ]; then
+	echo './stats {-rows|cols} [file]' >& 2
+	exit 1
+fi
+
+#Check whether the first argument is -r (or -rows) or -c (or -cols)
+#If not, return an error message
+if [[ "$1" == -c* ]]; then
+	compute='columns'
+elif [[ "$1" == -r* ]]; then
+	compute='rows'
+else
+	echo './stats {-rows|cols} [file]' >& 2
+	exit 1
+fi
+
+#File name constants
+cellsFile="cells$$"
+sortedCellsFile="sortedCells$$"
+avgFile="avg$$"
+medFile="med$$"
+tableFile="table$$"
+tempTableFile="tempTable$$"
+
+if [ -n "$2" ]; then
+    #Error message if file name invalid
+    if [ ! -r "$2" ]; then
+        echo "./stats: cannot read $2" >& 2
+        exit 1
+    fi
+    #If a file was passed in, use that
+	cat "$2" > $tableFile
+else
+	#Otherwise use stdin
+    while read line; do
+        echo "$line" >> $tableFile
+    done
+fi
+
+#Turn the columns into rows if column mode is selected
+if [ $compute == 'columns' ]; then
+    i=1
+    firstLine=`head -1 $tableFile`
+
+    #Iterate through the columns in the table
+    for num in $firstLine; do
+        #Cut the column and paste it as a row in the temp file
+        cut -f $i $tableFile | paste -s >> $tempTableFile
+        let "i++"
+    done
+    #Clean up
+    cat $tempTableFile > $tableFile
+    rm -f $tempTableFile
+fi
+
+while read line; do
+    #Sum the line and put the cells into a temp file
+    sum=0
+    for num in $line; do 
+        sum=`expr $sum + $num`
+        echo "$num" >> $cellsFile
+    done
+    
+    #Calculate median
+    sort -g $cellsFile >> $sortedCellsFile
+    cellsLength=`cat $cellsFile | wc -l`
+    medianLine=`expr $cellsLength / 2 + 1`
+    head -${medianLine} $sortedCellsFile | tail -1 >> $medFile
+    
+    #Calculate average
+    let average="($sum + ($cellsLength/2)) / $cellsLength"
+    echo $average >> $avgFile
+
+    #Remove files before using them again
+    rm -f $cellsFile
+    rm -f $sortedCellsFile
+    
+done < $tableFile
+
+if [ $compute == 'columns' ]; then
+    #Print averages and medians on their respective lines with tabs between the cells
+    echo "Averages:"
+    cut -f 1 $avgFile | paste -s
+    echo "Medians:"
+    cut -f 1 $medFile | paste -s
+else
+    #Print average and median for each line with a tab between them
+    echo "Average Median"
+    paste $avgFile $medFile
+fi
+
+#Remove temporary files before exiting
+rm -f $medFile
+rm -f $avgFile
+rm -f $tableFile
